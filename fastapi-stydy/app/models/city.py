@@ -16,6 +16,7 @@ class City(Base):
     data = relationship('Data', back_populates='city')  # Data 是关联的类名，back_populates 是反向访问的属性名
     create_at = Column(DateTime, server_default=func.now())
     update_at = Column(DateTime, server_default=func.now(), server_onupdate=func.now())
+    name = Column(String(20))
 
     def __repr__(self) -> str:
         return f'{self.country}-{self.provience}'
@@ -35,4 +36,3 @@ class Data(Base):
         return f'{self.id}'
 
 
-Base.metadata.create_all(engine)
