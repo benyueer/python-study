@@ -38,6 +38,12 @@ pyenv global 3.6.5 2.7.14
 
 # 实际上当你切换版本后, 相应的pip和包仓库都是会自动切换过去的
 
+# 创建一个3.6.5版本的虚拟环境, 命名为v365env, 然后激活虚拟环境
+pyenv virtualenv 3.6.5 v365env
+pyenv activate v365env
+# 关闭虚拟环境
+pyenv deactivate v365env
+
 ```
 
 * 在VSCode中使用
@@ -52,6 +58,7 @@ pyenv global 3.6.5 2.7.14
 ### 安装
 ```shell
 curl -sSL https://raw.githubusercontent.com/sdispater/poetry/master/get-poetry.py | python
+pip3 install poetry
 ```
 
 ### 使用
