@@ -826,3 +826,142 @@ list(chain(s, t))
 ```
 
 `yield from x`表达式对 x 对象做的第一件事是调用`iter(x)`，从中获取迭代器，因此 x 可以是任何可迭代对象
+
+
+# 用 future 处理并发
+Python3.2 引入`concurrent.futures`模块
+`future`指一种对象，表示异步执行的操作，是`concurrent.futures`模块和`asyncio`包的基础
+
+## 网络下载的三种风格
+为了高效处理网络IO，需要使用并发，因为网络有很高的延迟，为了不浪费CPU周期去等待，最好在收到网络响应前去做些其他事
+
+### 依序下载的脚本
+```py
+import os
+import time
+import sys
+
+import requests
+
+POP20_CC = 'CN IN US ID BR PK NG'.split()
+
+BASE_URL = 'http://flupy.org/data/flags'
+
+DEST_DIR = '~/Downloads/'
+
+def save_flag(img, filename):
+  path = os.path.join(DEST_DIR, filename)
+  with open(path, 'wb') as fp:
+    fp.write(img)
+
+def get_flag(cc):
+  url = '{}/{cc}/{cc}.gif'.format(BASE_URL, cc = cc.lower())
+  resp = requests.get(url)
+  return resp.content
+
+def show(text):
+  print(text, end=' ')
+  sys.stdout.flush()
+
+def download_many(cc_list):
+  for cc in sorted(cc_list):
+    image = get_flag(cc)
+    show(cc)
+    save_flag(image, cc.lower()+'.gif')
+  
+  return len(cc_list)
+
+
+def main(download_many):
+  t0 = time.time()
+  count = download_many(POP20_CC)
+  elapsed = time.time() - t0
+  msg = '\n{} flags downloaded in {:.2f}s'
+  print(msg.format(count, elapsed))
+
+
+if __name__ == '__main__':
+  main(download_many)
+```
+
+### 使用 concurrent.futures 模块下载
+`concurrent.futures`模块的主要特色是`ThreadPollExecutor`和`ProcessPollExecutor`类
+这两个类实现的接口能分别在不同的线程或进程中执行可调用的对象。这两个类内部维护着一个工作线程或进程池，以及要执行的任务队列
+
+并发下载：
+```py
+from concurrent import futures
+from flags import save_flag, get_flag, show, main
+
+MAX_WORKERS = 20
+
+def download_one(cc):
+  image = get_flag(cc)
+  show(cc)
+  save_flag(image, cc.lower() + '.gif')
+  return cc
+
+def download_many(cc_list):
+  workers = min(MAX_WORKERS, len(cc_list))
+  with futures.ThreadPollExecutor(workers) as executor:
+    res = executor.map(download_one, sorted(cc_list))
+
+  return len(list(res))
+
+if __name__ == '__main__':
+  main(download_many)
+```
+
+### future
+我们在使用`concurrent.futures`和`asyncio`时常常看不到`future`
+从 Python3.4 起，有两个 future 类：`concurrent.futures.Future`和`asyncio.Future`
+这两个类作用相同：两个 Future 的实例都表示可能已经完成或者尚未完成的延迟计算
+future 封装待完成的操作，可以放入队列，完成的状态可以查询，得到结果（或抛出异常）后可以获得结果（或异常）
+
+通常情况下自己不应该创建 future，只能由并发框架实例化，future 表示终将发生的事，而确定某件事会发生的唯一方式执行的时间已经排定，因此，只有把排定某件事交给`concurrent.futures.Executor`子类处理时，才会创建`concurrent.futures.Future`实例
+
+客户端代码不应该改变 future 状态，并发框架在计算结束后会改变 future 状态，而我们无法控制计算何时结束
+
+这两种 Future 都有 `.done()`方法，这个方法不阻塞，返回值为布尔，表名 future 链接的可调用对象是否已执行
+客户端代码通常不会询问 future 是否执行结束，而是等待通知，因此，两个 Future 类都有`.add_done_callback()`方法，这个方法只有一个参数，类型是可调用对象，future 运行结束后会调用指定的可调用对象
+
+此外，还有`.result()`方法，在运行结束时调用，会返回结果或异常，如果在未结束时调用，对`concurrent.futures.Future`来说，会阻塞代码直到有结果返回，可选`timeout`参数，如果在指定的时间内没有执行完毕，会抛出异常， asyncio 不支持超时
+
+```py
+def dowmload_many(cc_list):
+  cc_list = cc_list[:5]
+  with futures.ThreadPollExecutor(max_workers = 3) as executor:
+    to_do = []
+    for cc in sorted(cc_list):
+      future = executor.submit(download_one, cc)
+      to_do.append(future)
+      msg = 'Scheduled for {}:{}'
+      print(msg.format(cc, future))
+
+    results = []
+    for future in futures.as_completed(to_do):
+      res = future.result()
+      msg = '{} result: {!r}'
+      print(msg.format(future, res))
+      results.append(res)
+
+  return len(results)
+```
+
+## 阻塞型IO 和 GIL
+CPython 解释器本身就不是线程安全的，因此有全局解释器锁（GIL），一次只允许使用一个线程执行 Python 字节码。因此，一个 Python 进程通常不能同时使用多个CPU核心
+编写 Python 代码时无法控制 GIL，不过，执行耗时任务时，可以使用一个内置的函数或一个C语言编写的扩展释放GIL
+标准库中所有执行阻塞型IO操作的函数，在等待操作系统返回结果时都会释放GIL。这意味着在 Python 语言这个层次上可以使用多线程，而IO密集型 Python 程序能从中受益：一个 Python 线程等待网络响应时，阻塞型IO函数会释放GIL，再运行一个线程
+
+
+## 使用 concurrent.futures 模块启动进程
+该模块使用`ProcressPollExecutor`类把工作分配给多个 Python 进程处理。因此，如果要进行CPU密集型处理，使用这个模块能绕开GIL，利用所有可用的CPU核心
+
+## `Executor.map`方法
+若想并发运行多个可调用对象，最简单的就是使用`Executor.map`方法
+
+
+# 使用 asyncio 包处理并发
+这个包使用事件循环驱动的协程实现并发
+
+## 线程与协程对比
