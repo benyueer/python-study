@@ -58,3 +58,21 @@ class TestAsyncio(unittest.TestCase):
         async 修饰的函数成为 coroutine 对象，要使用 asyncio.run 运行
         """
         asyncio.run(run_asyncio())
+    
+    def test_loop_same(self):
+        """多次调用 get_event_loop 得到同一个实例"""
+        loop1 = asyncio.get_event_loop()
+        loop2 = asyncio.get_event_loop()
+
+        print(id(loop1), id(loop2))
+
+    def test_async_go(self):
+        async def fun():
+            print("s")
+            await asyncio.sleep(1)
+            print("e")
+            return 1
+
+        print(1)
+        asyncio.run(fun())
+        print(2)
